@@ -1,0 +1,137 @@
+package iam
+
+import (
+	"fmt"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/iam"
+	"github.com/spf13/cobra"
+
+	"sigs.k8s.io/cluster-api-provider-aws/v2/cmd/clusterawsadm/cmd/bootstrap/credentials"
+	"sigs.k8s.io/cluster-api-provider-aws/v2/cmd/clusterawsadm/cmd/flags"
+	iamservice "sigs.k8s.io/cluster-api-provider-aws/v2/cmd/clusterawsadm/iamservice"
+	"sigs.k8s.io/cluster-api/cmd/clusterctl/cmd"
+)
+
+func createServices() *cobra.Command {
+	newCmd := &cobra.Command{
+		Use:     "create",
+		Aliases: []string{"c"},
+		Short:   "Create AWS IAM resources",
+		Args:    cobra.NoArgs,
+		Long: cmd.LongDesc(`
+		` + credentials.CredentialHelp),
+		Example: cmd.Examples(`
+		`),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			t, err := getBootstrapTemplate(cmd)
+			if err != nil {
+				return err
+			}
+			if err := resolveTemplateRegion(t, cmd); err != nil {
+				fmt.Println("AWS_REGION env not set and --region flag not provided, default configuration will be used")
+			}
+			fmt.Printf("Attempting to create AWS Resources %s\n", t.Spec.StackName)
+			sess, err := session.NewSessionWithOptions(session.Options{
+				SharedConfigState: session.SharedConfigEnable,
+				Config:            aws.Config{Region: aws.String(t.Spec.Region)},
+			})
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				return err
+			}
+			iamSvc := iam.New(sess)
+			svc := iamservice.New(iamSvc)
+			err = svc.CreateService(*t.RenderCloudFormation(), t.Spec.StackTags)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				return err
+			}
+			return err
+		},
+	}
+	addConfigFlag(newCmd)
+	flags.AddRegionFlag(newCmd)
+	return newCmd
+}
+
+func deleteServices() *cobra.Command {
+	newCmd := &cobra.Command{
+		Use:     "delete",
+		Aliases: []string{"d"},
+		Short:   "Delete AWS IAM resources",
+		Args:    cobra.NoArgs,
+		Long: cmd.LongDesc(`
+		`),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			t, err := getBootstrapTemplate(cmd)
+			if err != nil {
+				return err
+			}
+			if err := resolveTemplateRegion(t, cmd); err != nil {
+				fmt.Println("AWS_REGION env not set and --region flag not provided, default configuration will be used")
+			}
+			fmt.Printf("Attempting to delete AWS Resources %s\n", t.Spec.StackName)
+			sess, err := session.NewSessionWithOptions(session.Options{
+				SharedConfigState: session.SharedConfigEnable,
+				Config:            aws.Config{Region: aws.String(t.Spec.Region)},
+			})
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				return err
+			}
+			iamsvc := iam.New(sess)
+			svc := iamservice.New(iamsvc)
+			err = svc.DeleteServices(*t.RenderCloudFormation(), t.Spec.StackTags)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				return err
+			}
+			return nil
+		},
+	}
+	addConfigFlag(newCmd)
+	flags.AddRegionFlag(newCmd)
+	return newCmd
+}
+
+func updateServices() *cobra.Command {
+	newCmd := &cobra.Command{
+		Use:     "update-policy",
+		Aliases: []string{"u"},
+		Short:   "Update AWS IAM policies",
+		Args:    cobra.NoArgs,
+		Long: cmd.LongDesc(`
+		`),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			t, err := getBootstrapTemplate(cmd)
+			if err != nil {
+				return err
+			}
+			if err := resolveTemplateRegion(t, cmd); err != nil {
+				fmt.Println("AWS_REGION env not set and --region flag not provided, default configuration will be used")
+			}
+			fmt.Printf("Attempting to update AWS IAM Resources %s\n", t.Spec.StackName)
+			sess, err := session.NewSessionWithOptions(session.Options{
+				SharedConfigState: session.SharedConfigEnable,
+				Config:            aws.Config{Region: aws.String(t.Spec.Region)},
+			})
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				return err
+			}
+			iamsvc := iam.New(sess)
+			svc := iamservice.New(iamsvc)
+			err = svc.UpdateServices(*t.RenderCloudFormation(), t.Spec.StackTags)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				return err
+			}
+			return nil
+		},
+	}
+	addConfigFlag(newCmd)
+	flags.AddRegionFlag(newCmd)
+	return newCmd
+}

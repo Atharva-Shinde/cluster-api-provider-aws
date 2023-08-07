@@ -44,32 +44,45 @@ func CreateClient() *iam.IAM {
 func (s *serviceImpl) CreateService(t go_cfn.Template, tags map[string]string) error {
 	client := CreateClient()
 	resources := t.Resources
-	priorityCreate(resources, tags, client)
+	err := priorityCreate(resources, tags, client)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
-func priorityCreate(resources go_cfn.Resources, tags map[string]string, client *iam.IAM) {
+func priorityCreate(resources go_cfn.Resources, tags map[string]string, client *iam.IAM) error {
 	rmap := map[int][]go_cfn.Resource{}
 	for _, resource := range resources {
 		if resource.AWSCloudFormationType() == configservice.ResourceTypeAwsIamRole {
 			rmap[1] = append(rmap[1], resource)
-		}
-		if resource.AWSCloudFormationType() == "AWS::IAM::InstanceProfile" {
+		} else if resource.AWSCloudFormationType() == "AWS::IAM::InstanceProfile" {
 			rmap[2] = append(rmap[2], resource)
-		}
-		if resource.AWSCloudFormationType() == "AWS::IAM::ManagedPolicy" {
+		} else if resource.AWSCloudFormationType() == "AWS::IAM::ManagedPolicy" {
 			rmap[3] = append(rmap[3], resource)
+		} else {
+			return fmt.Errorf("error: unknown resource type: %v", resource)
 		}
 	}
 	for _, resource := range rmap[1] {
-		CreateRole(resource, tags, client)
+		err := CreateRole(resource, tags, client)
+		if err != nil {
+			return err
+		}
 	}
 	for _, resource := range rmap[2] {
-		CreateInstanceProfile(resource, tags, client)
+		err := CreateInstanceProfile(resource, tags, client)
+		if err != nil {
+			return err
+		}
 	}
 	for _, resource := range rmap[3] {
-		CreatePolicy(resource, tags, client)
+		err := CreatePolicy(resource, tags, client)
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func CreateInstanceProfile(resource go_cfn.Resource, tags map[string]string, client *iam.IAM) error {
@@ -82,7 +95,7 @@ func CreateInstanceProfile(resource go_cfn.Resource, tags map[string]string, cli
 		}
 		tgs = append(tgs, &tag)
 	}
-	create, err := client.CreateInstanceProfile(&iam.CreateInstanceProfileInput{
+	_, err := client.CreateInstanceProfile(&iam.CreateInstanceProfileInput{
 		InstanceProfileName: &res.InstanceProfileName,
 		Tags:                tgs,
 	})
@@ -90,30 +103,26 @@ func CreateInstanceProfile(resource go_cfn.Resource, tags map[string]string, cli
 		if aerr, ok := err.(awserr.Error); ok {
 			switch aerr.Code() {
 			case iam.ErrCodeEntityAlreadyExistsException:
-				// fmt.Println(iam.ErrCodeEntityAlreadyExistsException, aerr.Error())
-				addRoleToInstanceProf(resource, tags, client)
+				attachRoleToInstanceProf(resource, client)
 			case iam.ErrCodeInvalidInputException:
-				fmt.Println(iam.ErrCodeInvalidInputException, aerr.Error())
+				return fmt.Errorf("error: %v, %v", iam.ErrCodeInvalidInputException, aerr.Error())
 			case iam.ErrCodeLimitExceededException:
-				fmt.Println(iam.ErrCodeLimitExceededException, aerr.Error())
+				return fmt.Errorf("error: %v, %v", iam.ErrCodeLimitExceededException, aerr.Error())
 			case iam.ErrCodeConcurrentModificationException:
-				fmt.Println(iam.ErrCodeConcurrentModificationException, aerr.Error())
+				return fmt.Errorf("error: %v, %v", iam.ErrCodeConcurrentModificationException, aerr.Error())
 			case iam.ErrCodeServiceFailureException:
-				fmt.Println(iam.ErrCodeServiceFailureException, aerr.Error())
+				return fmt.Errorf("error: %v, %v", iam.ErrCodeServiceFailureException, aerr.Error())
 			default:
-				fmt.Println(aerr.Error())
+				return fmt.Errorf(aerr.Error())
 			}
 		}
 	}
-	addRoleToInstanceProf(resource, tags, client)
-	fmt.Println(create)
-	return nil
+	return attachRoleToInstanceProf(resource, client)
 }
 
-func addRoleToInstanceProf(resource go_cfn.Resource, tags map[string]string, client *iam.IAM) {
+func attachRoleToInstanceProf(resource go_cfn.Resource, client *iam.IAM) error {
 	res := resource.(*cfn_iam.InstanceProfile)
-	// diff between https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_AssociateIamInstanceProfile.html and function I used?
-	addRole, err := client.AddRoleToInstanceProfile(&iam.AddRoleToInstanceProfileInput{
+	_, err := client.AddRoleToInstanceProfile(&iam.AddRoleToInstanceProfileInput{
 		InstanceProfileName: &res.InstanceProfileName,
 		RoleName:            &res.InstanceProfileName,
 	})
@@ -121,21 +130,22 @@ func addRoleToInstanceProf(resource go_cfn.Resource, tags map[string]string, cli
 		if aerr, ok := err.(awserr.Error); ok {
 			switch aerr.Code() {
 			case iam.ErrCodeEntityAlreadyExistsException:
-				fmt.Println(iam.ErrCodeEntityAlreadyExistsException, aerr.Error())
+				return fmt.Errorf("error: %v, %v", iam.ErrCodeEntityAlreadyExistsException, aerr.Error())
 			case iam.ErrCodeNoSuchEntityException:
-				fmt.Println(iam.ErrCodeNoSuchEntityException, aerr.Error())
+				return fmt.Errorf("error: %v, %v", iam.ErrCodeNoSuchEntityException, aerr.Error())
 			case iam.ErrCodeLimitExceededException:
-				fmt.Println(iam.ErrCodeLimitExceededException, aerr.Error())
+				return fmt.Errorf("error: %v, %v", iam.ErrCodeLimitExceededException, aerr.Error())
 			case iam.ErrCodeUnmodifiableEntityException:
-				fmt.Println(iam.ErrCodeUnmodifiableEntityException, aerr.Error())
+				return fmt.Errorf("error: %v, %v", iam.ErrCodeUnmodifiableEntityException, aerr.Error())
 			case iam.ErrCodeServiceFailureException:
-				fmt.Println(iam.ErrCodeServiceFailureException, aerr.Error())
+				return fmt.Errorf("error: %v, %v", iam.ErrCodeServiceFailureException, aerr.Error())
 			default:
-				fmt.Println(aerr.Error())
+				return fmt.Errorf(aerr.Error())
 			}
 		}
 	}
-	fmt.Println(addRole)
+	fmt.Printf("successfully attached IAM role to instance profile: %s", res.InstanceProfileName)
+	return nil
 }
 
 func CreateRole(resource go_cfn.Resource, tags map[string]string, client *iam.IAM) error {
@@ -151,7 +161,7 @@ func CreateRole(resource go_cfn.Resource, tags map[string]string, client *iam.IA
 	rawdata := res.AssumeRolePolicyDocument.(*iamv1.PolicyDocument)
 	data, err := json.Marshal(rawdata)
 	if err != nil {
-		fmt.Println(err)
+		return fmt.Errorf("error: marshalling %s resource: %w", res.RoleName, err)
 	}
 	create, err := client.CreateRole(&iam.CreateRoleInput{
 		AssumeRolePolicyDocument: aws.String(string(data)),
@@ -160,7 +170,7 @@ func CreateRole(resource go_cfn.Resource, tags map[string]string, client *iam.IA
 		Tags:                     tgs,
 	})
 	if err != nil {
-		fmt.Println(err)
+		return fmt.Errorf("error: creating role %s: %w", res.RoleName, err)
 	}
 	return attachPoliciesToRole(create.Role.RoleName, res.ManagedPolicyArns, client)
 }
@@ -178,7 +188,7 @@ func CreatePolicy(resource go_cfn.Resource, tags map[string]string, client *iam.
 	rawdata := res.PolicyDocument.(*iamv1.PolicyDocument)
 	data, err := json.Marshal(rawdata)
 	if err != nil {
-		fmt.Println(err)
+		return fmt.Errorf("error: marshalling %s resource: %w", res.ManagedPolicyName, err)
 	}
 	create, err := client.CreatePolicy(&iam.CreatePolicyInput{
 		Description:    &res.Description,
@@ -187,10 +197,9 @@ func CreatePolicy(resource go_cfn.Resource, tags map[string]string, client *iam.
 		Tags:           tgs,
 	})
 	if err != nil {
-		fmt.Println(err)
+		return fmt.Errorf("error: creating policy %s: %w", res.ManagedPolicyName, err)
 	}
-	return attachRolesToPolicy(create.Policy.Arn, res.Roles, client)
-
+	return attachRolesToPolicy(create.Policy, res.Roles, client)
 }
 
 func attachPoliciesToRole(rolename *string, managedpolicies []string, client *iam.IAM) error {
@@ -199,7 +208,7 @@ func attachPoliciesToRole(rolename *string, managedpolicies []string, client *ia
 		return nil
 	}
 	for _, policy := range managedpolicies {
-		attachRole, err := client.AttachRolePolicy(&iam.AttachRolePolicyInput{
+		_, err := client.AttachRolePolicy(&iam.AttachRolePolicyInput{
 			RoleName:  rolename,
 			PolicyArn: &policy,
 		})
@@ -207,23 +216,23 @@ func attachPoliciesToRole(rolename *string, managedpolicies []string, client *ia
 			if aerr, ok := err.(awserr.Error); ok {
 				switch aerr.Code() {
 				case iam.ErrCodeNoSuchEntityException:
-					fmt.Println(iam.ErrCodeNoSuchEntityException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodeNoSuchEntityException, aerr.Error())
 				case iam.ErrCodeLimitExceededException:
-					fmt.Println(iam.ErrCodeLimitExceededException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodeLimitExceededException, aerr.Error())
 				case iam.ErrCodeInvalidInputException:
-					fmt.Println(iam.ErrCodeInvalidInputException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodeInvalidInputException, aerr.Error())
 				case iam.ErrCodeUnmodifiableEntityException:
-					fmt.Println(iam.ErrCodeUnmodifiableEntityException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodeUnmodifiableEntityException, aerr.Error())
 				case iam.ErrCodePolicyNotAttachableException:
-					fmt.Println(iam.ErrCodePolicyNotAttachableException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodePolicyNotAttachableException, aerr.Error())
 				case iam.ErrCodeServiceFailureException:
-					fmt.Println(iam.ErrCodeServiceFailureException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodeServiceFailureException, aerr.Error())
 				default:
-					fmt.Println(aerr.Error())
+					return fmt.Errorf(aerr.Error())
 				}
 			}
 		}
-		fmt.Println(attachRole)
+		fmt.Printf("successfully attached %s to %s", policy, *rolename)
 	}
 	return nil
 }
@@ -245,18 +254,20 @@ func getRoleName(roleRef string) (string, error) {
 	return roleName, nil
 }
 
-func attachRolesToPolicy(policyarn *string, roles []string, client *iam.IAM) error {
+func attachRolesToPolicy(policy *iam.Policy, roles []string, client *iam.IAM) error {
+	policyarn := policy.Arn
 	for _, role := range roles {
+		//error here
 		bytes, err := base64.RawStdEncoding.DecodeString(role)
 		if err != nil {
-			fmt.Println(err)
+			return fmt.Errorf("error: decoding %s: %w", role, err)
 		}
 		roleRef := strings.Trim(strings.TrimLeft(string(bytes), "{Ref:\\ \""), "\\ \"")
 		roleName, err := getRoleName(roleRef)
 		if err != nil {
-			fmt.Println(err)
+			return err
 		}
-		attachPolicy, err := client.AttachRolePolicy(&iam.AttachRolePolicyInput{
+		_, err = client.AttachRolePolicy(&iam.AttachRolePolicyInput{
 			PolicyArn: policyarn,
 			RoleName:  &roleName,
 		})
@@ -264,23 +275,23 @@ func attachRolesToPolicy(policyarn *string, roles []string, client *iam.IAM) err
 			if aerr, ok := err.(awserr.Error); ok {
 				switch aerr.Code() {
 				case iam.ErrCodeNoSuchEntityException:
-					fmt.Println(iam.ErrCodeNoSuchEntityException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodeNoSuchEntityException, aerr.Error())
 				case iam.ErrCodeLimitExceededException:
-					fmt.Println(iam.ErrCodeLimitExceededException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodeLimitExceededException, aerr.Error())
 				case iam.ErrCodeInvalidInputException:
-					fmt.Println(iam.ErrCodeInvalidInputException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodeInvalidInputException, aerr.Error())
 				case iam.ErrCodeUnmodifiableEntityException:
-					fmt.Println(iam.ErrCodeUnmodifiableEntityException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodeUnmodifiableEntityException, aerr.Error())
 				case iam.ErrCodePolicyNotAttachableException:
-					fmt.Println(iam.ErrCodePolicyNotAttachableException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodePolicyNotAttachableException, aerr.Error())
 				case iam.ErrCodeServiceFailureException:
-					fmt.Println(iam.ErrCodeServiceFailureException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodeServiceFailureException, aerr.Error())
 				default:
-					fmt.Println(aerr.Error())
+					return fmt.Errorf(aerr.Error())
 				}
 			}
 		}
-		fmt.Println(attachPolicy)
+		fmt.Printf("successfully attached %s to %s", roleRef, *policy.PolicyName)
 	}
 	return nil
 }
@@ -291,73 +302,70 @@ func (s *serviceImpl) DeleteServices(t go_cfn.Template, tags map[string]string) 
 	for _, resource := range t.Resources {
 		if resource.AWSCloudFormationType() == configservice.ResourceTypeAwsIamRole {
 			res := resource.(*cfn_iam.Role)
-			//this will not detach instance profiles from roles not associated with capa
-			removerole, err := client.RemoveRoleFromInstanceProfile(&iam.RemoveRoleFromInstanceProfileInput{
+			_, err := client.RemoveRoleFromInstanceProfile(&iam.RemoveRoleFromInstanceProfileInput{
 				InstanceProfileName: &res.RoleName,
 				RoleName:            &res.RoleName,
 			})
 			if err != nil {
-				fmt.Println(err)
+				return fmt.Errorf("error: removing detaching role from instance profile %s: %w", res.RoleName, err)
 			}
-			fmt.Println(removerole)
-			delInstanceProfile, err := client.DeleteInstanceProfile(&iam.DeleteInstanceProfileInput{
+			_, err = client.DeleteInstanceProfile(&iam.DeleteInstanceProfileInput{
 				InstanceProfileName: &res.RoleName,
 			})
 			if err != nil {
-				fmt.Println(err)
+				return fmt.Errorf("error: deleting instance profile %s: %w", res.RoleName, err)
 			}
-			fmt.Println(delInstanceProfile)
+			fmt.Printf("Successfully deleted: %s instance profile", res.RoleName)
 			listManagedPolicies, err := client.ListAttachedRolePolicies(&iam.ListAttachedRolePoliciesInput{
 				RoleName: &res.RoleName,
 			})
 			if err != nil {
-				fmt.Println(err)
+				return fmt.Errorf("error: unable to list managed policies for %s: %w", res.RoleName, err)
 			}
 			for _, policy := range listManagedPolicies.AttachedPolicies {
 				attachedManagedPolicies = append(attachedManagedPolicies, policy)
-				detachManagedPolicy, err := client.DetachRolePolicy(&iam.DetachRolePolicyInput{
+				_, err := client.DetachRolePolicy(&iam.DetachRolePolicyInput{
 					RoleName:  &res.RoleName,
 					PolicyArn: policy.PolicyArn,
 				})
 				if err != nil {
-					fmt.Println(err)
+					return fmt.Errorf("error: detaching %s from %s: %w", *policy.PolicyName, res.RoleName, err)
 				}
-				fmt.Println(detachManagedPolicy)
 			}
-			delRole, err := client.DeleteRole(&iam.DeleteRoleInput{
+			_, err = client.DeleteRole(&iam.DeleteRoleInput{
 				RoleName: &res.RoleName,
 			})
 			if err != nil {
-				fmt.Println(err)
+				return fmt.Errorf("error: deleting role %s: %w", res.RoleName, err)
 			}
-			fmt.Println(delRole)
+			fmt.Printf("Successfully deleted: %s role", res.RoleName)
 		}
 	}
 	// can there be policies which aren't attached to any IAM resource?
 	// use ListEntitiesForPolicy()?
 	for _, policy := range attachedManagedPolicies {
-		deletePolicy, err := client.DeletePolicy(&iam.DeletePolicyInput{
+		_, err := client.DeletePolicy(&iam.DeletePolicyInput{
 			PolicyArn: policy.PolicyArn,
 		})
 		if err != nil {
 			if aerr, ok := err.(awserr.Error); ok {
 				switch aerr.Code() {
 				case iam.ErrCodeNoSuchEntityException:
-					fmt.Println(iam.ErrCodeNoSuchEntityException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodeNoSuchEntityException, aerr.Error())
 				case iam.ErrCodeLimitExceededException:
-					fmt.Println(iam.ErrCodeLimitExceededException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodeLimitExceededException, aerr.Error())
 				case iam.ErrCodeInvalidInputException:
-					fmt.Println(iam.ErrCodeInvalidInputException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodeInvalidInputException, aerr.Error())
 				case iam.ErrCodeDeleteConflictException:
-					fmt.Println(iam.ErrCodeDeleteConflictException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodeDeleteConflictException, aerr.Error())
 				case iam.ErrCodeServiceFailureException:
-					fmt.Println(iam.ErrCodeServiceFailureException, aerr.Error())
+					return fmt.Errorf("error: %v, %v", iam.ErrCodeServiceFailureException, aerr.Error())
 				default:
-					fmt.Println(aerr.Error())
+					return fmt.Errorf(aerr.Error())
 				}
 			}
 		}
-		fmt.Println(deletePolicy)
+		fmt.Printf("Successfully deleted: %s policy", *policy.PolicyName)
 	}
 	return nil
 }
@@ -380,7 +388,7 @@ func (s *serviceImpl) UpdateServices(t go_cfn.Template, tags map[string]string) 
 			res := resource.(*cfn_iam.ManagedPolicy)
 			for _, policy := range policies {
 				if *policy.PolicyName == res.ManagedPolicyName {
-					UpdatePolicy(*res, policy, client)
+					err := UpdatePolicy(*res, policy, client)
 					if err != nil {
 						return err
 					}
@@ -393,7 +401,7 @@ func (s *serviceImpl) UpdateServices(t go_cfn.Template, tags map[string]string) 
 				res := resource.(*cfn_iam.Role)
 				fmt.Print(res, role)
 				if role.RoleName == &res.RoleName {
-					UpdateRole(res, role, client)
+					err := UpdateRole(res, role, client)
 					if err != nil {
 						return err
 					}
@@ -402,6 +410,7 @@ func (s *serviceImpl) UpdateServices(t go_cfn.Template, tags map[string]string) 
 
 		}
 	}
+	//return err
 	return nil
 }
 
@@ -409,9 +418,9 @@ func listroles(client *iam.IAM) ([]*iam.Role, error) {
 	//unable to list user created roles only
 	list, err := client.ListRoles(&iam.ListRolesInput{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error: listing roles: %w", err)
 	}
-	return list.Roles, err
+	return list.Roles, nil
 }
 
 // list policies from aws console can also list all the policies that are not aws managed but user/capa created
@@ -422,21 +431,20 @@ func listpolicies(client *iam.IAM) ([]*iam.Policy, error) {
 	}
 	list, err := client.ListPolicies(&input)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error: listing policies: %w", err)
 	}
-	return list.Policies, err
+	return list.Policies, nil
 }
 
 // what is there to update for roles? description?
 func UpdateRole(res *cfn_iam.Role, role *iam.Role, client *iam.IAM) error {
-	update, err := client.UpdateRole(&iam.UpdateRoleInput{
+	_, err := client.UpdateRole(&iam.UpdateRoleInput{
 		RoleName: &res.RoleName,
 		// Description: ,
 	})
 	if err != nil {
 		return err
 	}
-	fmt.Println(update)
 	return nil
 }
 
@@ -446,7 +454,7 @@ func UpdatePolicy(res cfn_iam.ManagedPolicy, policy *iam.Policy, client *iam.IAM
 		PolicyArn: policy.Arn,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("error: listing policy versions for %s: %w", *policy.PolicyName, err)
 	}
 	var latestPolicyVersion *iam.PolicyVersion
 	for _, version := range list.Versions {
@@ -462,32 +470,31 @@ func UpdatePolicy(res cfn_iam.ManagedPolicy, policy *iam.Policy, client *iam.IAM
 		VersionId: latestPolicyVersion.VersionId,
 	})
 	if err != nil {
-		return fmt.Errorf("getting policy version %s (%s): %w", *policy.Arn, *latestPolicyVersion.VersionId, err)
+		return fmt.Errorf("error: getting policy version for %s: %w", *policy.PolicyName, err)
 	}
 	policyDoc := policyVersionInfo.PolicyVersion.Document
 	decoded, err := url.QueryUnescape(*policyDoc)
 	if err != nil {
-		return err
+		return fmt.Errorf("error: decoding policy document %s of version %d: %w", *policy.PolicyName, latestPolicyVersion.VersionId, err)
 	}
 	awsVersionPolicy := &iamv1.PolicyDocument{}
 	if err := json.Unmarshal([]byte(decoded), awsVersionPolicy); err != nil {
-		return err
+		return fmt.Errorf("error: unmarshalling policy document %s of version %d: %w", *policy.PolicyName, latestPolicyVersion.VersionId, err)
 	}
 	if !isEqual(awsVersionPolicy.Statement, userPolicy.Statement, client) {
 		policyString, err := json.Marshal(userPolicy.Statement)
 		if err != nil {
 			return err
 		}
-		create, err := client.CreatePolicyVersion(&iam.CreatePolicyVersionInput{
+		_, err = client.CreatePolicyVersion(&iam.CreatePolicyVersionInput{
 			PolicyArn:      policy.Arn,
 			PolicyDocument: aws.String(string(policyString)),
 		})
 		if err != nil {
-			return err
+			return fmt.Errorf("error: creating new policy version for %s: %w", *policy.PolicyName, err)
 		}
-		fmt.Println(create)
 	} else {
-		fmt.Println("NO UPDATE REQUIRED")
+		fmt.Printf("policy document provided for \"%s\" is already present on the console \nno need to update the policy", *policy.PolicyName)
 	}
 	return nil
 }
