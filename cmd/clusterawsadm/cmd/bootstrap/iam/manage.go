@@ -14,7 +14,7 @@ import (
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/cmd"
 )
 
-func createServices() *cobra.Command {
+func createResources() *cobra.Command {
 	newCmd := &cobra.Command{
 		Use:     "create",
 		Aliases: []string{"c"},
@@ -42,7 +42,7 @@ func createServices() *cobra.Command {
 			}
 			iamSvc := iam.New(sess)
 			svc := iamservice.New(iamSvc)
-			err = svc.CreateServices(*t.RenderCloudFormation(), t.Spec.StackTags)
+			err = svc.CreateResources(*t.RenderCloudFormation(), t.Spec.StackTags)
 			if err != nil {
 				return err
 			}
@@ -54,7 +54,7 @@ func createServices() *cobra.Command {
 	return newCmd
 }
 
-func deleteServices() *cobra.Command {
+func deleteResources() *cobra.Command {
 	newCmd := &cobra.Command{
 		Use:     "delete",
 		Aliases: []string{"d"},
@@ -80,7 +80,7 @@ func deleteServices() *cobra.Command {
 			}
 			iamsvc := iam.New(sess)
 			svc := iamservice.New(iamsvc)
-			err = svc.DeleteServices(*t.RenderCloudFormation(), t.Spec.StackTags)
+			err = svc.DeleteResources(*t.RenderCloudFormation(), t.Spec.StackTags)
 			if err != nil {
 				return err
 			}

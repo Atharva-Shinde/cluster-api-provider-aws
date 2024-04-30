@@ -1,3 +1,20 @@
+/*
+Copyright 2024 The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package iamservice is a redefined way to create and delete IAM instance profiles, policies and roles.
 package iamservice
 
 import (
@@ -15,33 +32,36 @@ import (
 	cfn_iam "github.com/awslabs/goformation/v4/cloudformation/iam"
 	"github.com/pkg/errors"
 	"k8s.io/klog/v2"
+
 	iamv1 "sigs.k8s.io/cluster-api-provider-aws/v2/iam/api/v1beta1"
 )
 
+// Service defines methods for managing the AWS IAM resources using the AWS SDK.
 type Service interface {
-	CreateServices(t go_cfn.Template, tags map[string]string) error
-	DeleteServices(t go_cfn.Template, tags map[string]string) error
+	CreateResources(t go_cfn.Template, tags map[string]string) error
+	DeleteResources(t go_cfn.Template, tags map[string]string) error
 }
 
 type serviceImpl struct {
 	IAM *iam.IAM
 }
 
+// New creates a new IAM service object to interact with the AWS SDK.
 func New(iamSvc *iam.IAM) Service {
 	return &serviceImpl{
 		IAM: iamSvc,
 	}
 }
 
-func createClient() *iam.IAM {
+func createClient() (*iam.IAM, error) {
 	s, err := session.NewSession()
 	if err != nil {
-		errors.Wrap(err, "internal server error")
+		return nil, errors.Wrap(err, "internal server error")
 	}
-	return iam.New(s)
+	return iam.New(s), nil
 }
 
-func prioritySet(t go_cfn.Template, client *iam.IAM) (rmap map[string][]go_cfn.Resource, err error) {
+func prioritySet(t go_cfn.Template) (rmap map[string][]go_cfn.Resource, err error) {
 	rmap = map[string][]go_cfn.Resource{}
 	for _, resource := range t.Resources {
 		if resource.AWSCloudFormationType() == configservice.ResourceTypeAwsIamRole {
@@ -57,9 +77,13 @@ func prioritySet(t go_cfn.Template, client *iam.IAM) (rmap map[string][]go_cfn.R
 	return rmap, nil
 }
 
-func (s *serviceImpl) CreateServices(t go_cfn.Template, tags map[string]string) error {
-	client := createClient()
-	rmap, err := prioritySet(t, client)
+// CreateServices manages the order in which the IAM resources should be created.
+func (s *serviceImpl) CreateResources(t go_cfn.Template, tags map[string]string) error {
+	client, err := createClient()
+	if err != nil {
+		return err
+	}
+	rmap, err := prioritySet(t)
 	if err != nil {
 		return err
 	}
@@ -84,6 +108,7 @@ func (s *serviceImpl) CreateServices(t go_cfn.Template, tags map[string]string) 
 	return nil
 }
 
+// CreateRole creates a new CAPA Managed IAM Role and attaches it to the policies as defined in the bootstrap configuration file.
 func CreateRole(resource go_cfn.Resource, tags map[string]string, client *iam.IAM) error {
 	res := resource.(*cfn_iam.Role)
 	tgs := []*iam.Tag{}
@@ -123,6 +148,7 @@ func CreateRole(resource go_cfn.Resource, tags map[string]string, client *iam.IA
 	return nil
 }
 
+// CreateInstanceProfile creates a new CAPA Managed Instance Profile and attaches it to the role as defined in the bootstrap configuration file.
 func CreateInstanceProfile(resource go_cfn.Resource, tags map[string]string, client *iam.IAM) error {
 	res := resource.(*cfn_iam.InstanceProfile)
 	tgs := []*iam.Tag{}
@@ -155,6 +181,7 @@ func CreateInstanceProfile(resource go_cfn.Resource, tags map[string]string, cli
 	return nil
 }
 
+// CreatePolicy creates a new CAPA Managed IAM Policy and attaches it to the roles as defined in the bootstrap configuration file.
 func CreatePolicy(resource go_cfn.Resource, tags map[string]string, client *iam.IAM) error {
 	res := resource.(*cfn_iam.ManagedPolicy)
 	tgs := []*iam.Tag{}
@@ -231,7 +258,9 @@ func attachPoliciesToRole(rolename *string, awsManagedPolicies []string, client 
 		// klog.Warningf("no policies defined to attach to the IAM role \"%s\"", *rolename) // TODO
 		return nil
 	}
-	for _, policy := range awsManagedPolicies {
+	for _, policyArn := range awsManagedPolicies {
+		// making a copy of policyArn to avoid implicit memory aliasing
+		policy := policyArn
 		_, err := client.AttachRolePolicy(&iam.AttachRolePolicyInput{
 			RoleName:  rolename,
 			PolicyArn: &policy,
@@ -317,9 +346,13 @@ func listpolicies(client *iam.IAM) ([]*iam.Policy, error) {
 	return list.Policies, nil
 }
 
-func (s *serviceImpl) DeleteServices(t go_cfn.Template, tags map[string]string) error {
-	client := createClient()
-	rmap, err := prioritySet(t, client)
+// DeleteServices manages the order in which the IAM resources should be deleted.
+func (s *serviceImpl) DeleteResources(t go_cfn.Template, tags map[string]string) error {
+	client, err := createClient()
+	if err != nil {
+		return err
+	}
+	rmap, err := prioritySet(t)
 	if err != nil {
 		return err
 	}
@@ -349,11 +382,11 @@ func (s *serviceImpl) DeleteServices(t go_cfn.Template, tags map[string]string) 
 				}
 			}
 		}
-
 	}
 	return nil
 }
 
+// DeleteRole securely deletes CAPA Managed IAM Role.
 func DeleteRole(resource go_cfn.Resource, client *iam.IAM) error {
 	res := resource.(*cfn_iam.Role)
 	_, err := client.GetRole(&iam.GetRoleInput{
@@ -384,7 +417,6 @@ func DeleteRole(resource go_cfn.Resource, client *iam.IAM) error {
 			})
 			if err != nil {
 				return errors.Wrapf(err, "failed to detach \"%s\" IAM role from \"%s\" policy", res.RoleName, *policy.PolicyArn)
-
 			}
 		}
 	}
@@ -405,6 +437,7 @@ func DeleteRole(resource go_cfn.Resource, client *iam.IAM) error {
 	return nil
 }
 
+// DeleteInstanceProfile securely deletes CAPA Managed IAM Instance Profile.
 func DeleteInstanceProfile(resource go_cfn.Resource, client *iam.IAM) error {
 	res := resource.(*cfn_iam.InstanceProfile)
 	instanceProfileExists, err := client.GetInstanceProfile(&iam.GetInstanceProfileInput{
@@ -446,6 +479,7 @@ func DeleteInstanceProfile(resource go_cfn.Resource, client *iam.IAM) error {
 	return nil
 }
 
+// DeletePolicy securely deletes CAPA Managed IAM Policy.
 func DeletePolicy(policy *iam.Policy, client *iam.IAM) error {
 	_, err := client.DeletePolicy(&iam.DeletePolicyInput{
 		PolicyArn: policy.Arn,
