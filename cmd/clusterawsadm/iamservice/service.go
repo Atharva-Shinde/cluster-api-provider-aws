@@ -488,7 +488,7 @@ func DeletePolicy(policy *iam.Policy, client *iam.IAM) error {
 		if aerr, ok := err.(awserr.Error); ok {
 			switch aerr.Code() {
 			case iam.ErrCodeNoSuchEntityException:
-				klog.Warningf("\"%s\" IAM policy does not exist", policy.Arn)
+				klog.Warningf("\"%s\" IAM policy does not exist", *policy.Arn)
 				return nil
 			default:
 				return errors.Wrapf(err, "failed to delete \"%s\" IAM policy", *policy.PolicyName)
